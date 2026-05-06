@@ -1,10 +1,21 @@
-"""LoadImageFromURL — fetch a remote image and return ComfyUI IMAGE + MASK tensors."""
+"""LoadImageFromURL — fetch a remote image and return ComfyUI IMAGE + MASK tensors.
+
+Also previews the fetched image inside the node (like LoadImage / PreviewImage).
+"""
 import io
+import os
+import random
+import time
 from urllib.request import Request, urlopen
 
 import numpy as np
 import torch
 from PIL import Image, ImageOps
+
+try:
+    import folder_paths  # provided by ComfyUI at runtime
+except ImportError:
+    folder_paths = None
 
 
 def _fetch(url: str, timeout: int = 60) -> bytes:
@@ -31,6 +42,18 @@ def _pil_to_tensors(pil: Image.Image):
     return image_t, mask_t
 
 
+def _save_preview(pil: Image.Image) -> dict:
+    """Save image to ComfyUI temp dir and return the UI dict for inline preview."""
+    if folder_paths is None:
+        return {}
+    pil_rgb = pil.convert("RGB") if pil.mode != "RGB" else pil
+    temp_dir = folder_paths.get_temp_directory()
+    os.makedirs(temp_dir, exist_ok=True)
+    filename = f"db_loadurl_{int(time.time() * 1000)}_{random.randint(0, 9999)}.png"
+    pil_rgb.save(os.path.join(temp_dir, filename), format="PNG")
+    return {"images": [{"filename": filename, "subfolder": "", "type": "temp"}]}
+
+
 class LoadImageFromURL:
     @classmethod
     def INPUT_TYPES(cls):
@@ -51,6 +74,7 @@ class LoadImageFromURL:
     RETURN_NAMES = ("image", "mask", "url")
     FUNCTION = "load"
     CATEGORY = "DioBrando/IO"
+    OUTPUT_NODE = True
 
     def load(self, url, timeout=60):
         if not url or not url.strip():
@@ -58,4 +82,7 @@ class LoadImageFromURL:
         data = _fetch(url.strip(), timeout=timeout)
         pil = Image.open(io.BytesIO(data))
         image_t, mask_t = _pil_to_tensors(pil)
-        return (image_t, mask_t, url.strip())
+        return {
+            "ui": _save_preview(pil),
+            "result": (image_t, mask_t, url.strip()),
+        }
